@@ -1,0 +1,384 @@
+import { useState, useEffect } from 'react';
+import { Card, CardContent } from './ui/card';
+import { Button } from './ui/button';
+import { Calendar as CalendarIcon } from 'lucide-react';
+import { Calendar } from './ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, TooltipProps } from 'recharts';
+import svgPaths from '../imports/svg-ky8ajppq4y';
+
+const buildDateTime = (date: Date, timeStr: string) => {
+  const [hStr, mStr] = timeStr.split(":");
+  const h = parseInt(hStr ?? "0", 10);
+  const m = parseInt(mStr ?? "0", 10);
+  const d = new Date(date); // 원본 보존
+  d.setHours(h || 0, m || 0, 0, 0);
+  return d;
+};
+
+// Helper function to format date
+const formatDate = (date: Date | undefined) => {
+  if (!date) return '';
+  return date.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' });
+};
+
+// Helper function to format date for chart (MM/DD)
+const formatChartDate = (date: Date) => {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${month}/${day}`;
+};
+
+// Generate mock data based on date range
+const generateMockData = (startDate: Date | undefined, endDate: Date | undefined) => {
+  if (!startDate || !endDate) return [];
+  
+  const data = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  
+  // Generate data for each day between start and end
+  for (let i = 0; i < daysDiff; i++) {
+    const currentDate = new Date(start);
+    currentDate.setDate(start.getDate() + i);
+    
+    data.push({
+      date: formatChartDate(currentDate),
+      fullDate: currentDate.toLocaleDateString('ko-KR'),
+      temperature: 20 + Math.random() * 80,
+      smoke: 300 + Math.random() * 9700,
+    });
+  }
+  
+  return data;
+};
+
+// Custom Tooltip Component
+const CustomTooltip = ({ active, payload }: TooltipProps<number, string>) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white border border-[#c1c7cd] rounded-lg shadow-lg p-3">
+        <p className="text-sm text-[#21272a] mb-2">{payload[0].payload.fullDate}</p>
+        <p className="text-sm text-[#697077]">
+          온도: <span className="font-medium text-[#21272a]">{payload[0].value?.toFixed(1)}°C</span>
+        </p>
+        <p className="text-sm text-[#697077]">
+          연기: <span className="font-medium text-[#21272a]">{payload[1].value?.toFixed(0)}ppm</span>
+        </p>
+      </div>
+    );
+  }
+  return null;
+};
+
+export function DataRetrievalView() {
+  const [startDate, setStartDate] = useState<Date>();
+  const [endDate, setEndDate] = useState<Date>();
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
+
+  const [startTime, setStartTime] = useState("00:00");
+  const [endTime, setEndTime] = useState("23:59");
+
+  const toDateKey = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const isAvailableDate = (date: Date) => {
+    const key = toDateKey(date);
+    return availableDates.includes(key);
+  };
+
+  useEffect(() => {
+    const fetchAvailableDates = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/available-dates");
+        const data = await res.json();
+        // data.dates: ["2025-11-20", "2025-11-21", ...]
+        setAvailableDates(data.dates || []);
+      } catch (err) {
+        console.error("failed to fetch available dates", err);
+      }
+    };
+    fetchAvailableDates();
+  }, []);
+
+  const handleSearch = async () => {
+    if (!startDate || !endDate) return;
+
+    // 날짜 + 시간 합쳐서 DateTime 만들기
+    const start = buildDateTime(startDate, startTime);
+    const end = buildDateTime(endDate, endTime);
+
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/data?start_dt=${encodeURIComponent(
+          startIso,
+        )}&end_dt=${encodeURIComponent(endIso)}`
+      );
+      const json = await res.json();
+      const rows = json.data || [];
+
+      // 백엔드에서 받은 raw 시계열을 차트용으로 맵핑
+      const mapped = rows.map((row: any) => {
+        const d = new Date(row.timestamp);
+
+        return {
+          // X축에 표시할 값 (시간 기준)
+          date: d.toLocaleTimeString("ko-KR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          // 툴팁용 전체 시간
+          fullDate: d.toLocaleString("ko-KR"),
+          // Y축 데이터
+          temperature: row.temperature ?? 0,
+          smoke: row.gas ?? 0,
+        };
+      });
+
+      setChartData(mapped);
+    } catch (err) {
+      console.error("failed to fetch data", err);
+      setChartData([]);
+    }
+  };
+
+
+  return (
+    <div className="bg-white rounded-lg p-3 h-full flex flex-col overflow-hidden">
+      {/* Headline */}
+      <div className="mb-2 flex-shrink-0">
+        <h1 className="font-['Roboto'] font-bold text-lg leading-[1.1] text-[#21272a]" style={{ fontVariationSettings: "'wdth' 100" }}>
+          센싱 데이터 조회
+        </h1>
+      </div>
+
+      {/* Date Fields */}
+      <div className="flex items-center gap-0 mb-3 flex-shrink-0">
+        <Popover>
+          <PopoverTrigger asChild>
+            <div className="bg-white border-b border-[#c1c7cd] flex items-center px-2 py-1.5 h-[32px] cursor-pointer hover:bg-gray-50">
+              <p className="font-['Roboto'] font-normal text-xs leading-[1.4] text-[#697077] w-[90px]" style={{ fontVariationSettings: "'wdth' 100" }}>
+                {startDate ? formatDate(startDate) : 'Start date'}
+              </p>
+              <div className="ml-1 w-[16px] h-[16px]">
+                <div className="w-full h-full">
+                  <svg className="block w-full h-full" fill="none" preserveAspectRatio="none" viewBox="0 0 20 18">
+                    <path d={svgPaths.p12f70500} fill="#697077" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar
+              mode="single"
+              selected={startDate}
+              onSelect={setStartDate}
+              initialFocus
+              disabled={(date) => 
+                // 아직 서버에서 날짜 목록을 못 받았을 때는 모두 선택 가능
+                availableDates.length > 0 && !isAvailableDate(date)
+              }
+            />
+          </PopoverContent>
+        </Popover>
+
+        {/* Arrow Icon */}
+        <div className="bg-[#dde1e6] border-b border-[#c1c7cd] h-[32px] w-[32px] flex items-center justify-center">
+          <div className="w-[16px] h-[16px]">
+            <svg className="block w-full h-full" fill="none" preserveAspectRatio="none" viewBox="0 0 14 14">
+              <path d={svgPaths.pf6d0c00} fill="#697077" />
+            </svg>
+          </div>
+        </div>
+
+        <Popover>
+          <PopoverTrigger asChild>
+            <div className="bg-white border-b border-[#c1c7cd] flex items-center px-2 py-1.5 h-[32px] cursor-pointer hover:bg-gray-50">
+              <p className="font-['Roboto'] font-normal text-xs leading-[1.4] text-[#697077] w-[90px]" style={{ fontVariationSettings: "'wdth' 100" }}>
+                {endDate ? formatDate(endDate) : 'End date'}
+              </p>
+              <div className="ml-1 w-[16px] h-[16px]">
+                <div className="w-full h-full">
+                  <svg className="block w-full h-full" fill="none" preserveAspectRatio="none" viewBox="0 0 20 18">
+                    <path d={svgPaths.p12f70500} fill="#697077" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar
+              mode="single"
+              selected={endDate}
+              onSelect={setEndDate}
+              initialFocus
+              disabled={(date) =>
+                availableDates.length > 0 && !isAvailableDate(date)
+              }
+            />
+          </PopoverContent>
+        </Popover>
+
+        <Button
+          onClick={handleSearch}
+          className="ml-2 px-4 h-8 text-xs"
+          style={{ backgroundColor: '#0f62fe' }}
+          disabled={!startDate || !endDate}
+        >
+          조회
+        </Button>
+      </div>
+
+      {/* Time Fields */}
+      <div className="flex items-center gap-4 mb-3 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <input
+            type="time"
+            className="border border-[#c1c7cd] rounded-md px-2 py-1 text-xs bg-white h-[28px]"
+            value={startTime}
+            onChange={(e) => setStartTime(e.target.value)}
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="time"
+            className="border border-[#c1c7cd] rounded-md px-2 py-1 text-xs bg-white h-[28px]"
+            value={endTime}
+            onChange={(e) => setEndTime(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="grid grid-cols-2 gap-3 flex-1 overflow-hidden">
+        {/* Left: Chart */}
+        <Card className="border border-[#dde1e6] flex flex-col overflow-hidden">
+          <CardContent className="p-2 flex flex-col h-full overflow-hidden">
+            <div className="mb-2 flex-shrink-0">
+              <h2 className="font-['Roboto'] font-bold text-sm leading-[1.1] text-[#21272a] mb-2" style={{ fontVariationSettings: "'wdth' 100" }}>
+                화재 데이터
+              </h2>
+              
+              {/* Legend */}
+              <div className="flex items-center gap-3 mb-2">
+                <div className="flex items-center gap-0.5">
+                  <div className="w-3 h-3">
+                    <svg className="block w-full h-full" fill="none" preserveAspectRatio="none" viewBox="0 0 14 14">
+                      <path d={svgPaths.p299c4700} fill="#697077" />
+                    </svg>
+                  </div>
+                  <p className="font-['Roboto'] font-normal text-xs leading-[1.4] text-[#697077]" style={{ fontVariationSettings: "'wdth' 100" }}>
+                    온도
+                  </p>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <div className="w-3 h-3">
+                    <svg className="block w-full h-full" fill="none" preserveAspectRatio="none" viewBox="0 0 14 14">
+                      <path d={svgPaths.p299c4700} fill="#DDE1E6" />
+                    </svg>
+                  </div>
+                  <p className="font-['Roboto'] font-normal text-xs leading-[1.4] text-[#697077]" style={{ fontVariationSettings: "'wdth' 100" }}>
+                    연기
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Chart */}
+            <div className="flex-1 min-h-0">
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="0" stroke="#DDE1E6" vertical={false} />
+                    <XAxis 
+                      dataKey="date" 
+                      tick={{ fontSize: 12, fill: '#697077', fontFamily: 'Inter' }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis 
+                      yAxisId="left"
+                      domain={[0, 100]}
+                      ticks={[0, 20, 40, 60, 80, 100]}
+                      tick={{ fontSize: 12, fill: '#697077', fontFamily: 'Inter' }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={48}
+                      label={{ value: '°C', position: 'insideTop', offset: 10, style: { fontSize: 12, fill: '#697077', fontFamily: 'Inter' } }}
+                    />
+                    <YAxis 
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 10000]}
+                      ticks={[300, 10000]}
+                      tick={{ fontSize: 12, fill: '#697077', fontFamily: 'Inter' }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={60}
+                      label={{ value: 'ppm', position: 'insideTop', offset: 10, style: { fontSize: 12, fill: '#697077', fontFamily: 'Inter' } }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Line 
+                      yAxisId="left"
+                      type="monotone" 
+                      dataKey="temperature" 
+                      stroke="#878D96" 
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={true}
+                    />
+                    <Line 
+                      yAxisId="right"
+                      type="monotone" 
+                      dataKey="smoke" 
+                      stroke="#C1C7CD" 
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={true}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-gray-400 text-xs">
+                  날짜를 선택하고 조회 버튼을 눌러주세요
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Right: Video/Image Area */}
+        <div className="h-full bg-[#dde1e6] relative flex items-center justify-center rounded-lg overflow-hidden">
+          <div className="w-[120px] h-[120px] bg-[#dde1e6] flex items-center justify-center">
+            <svg 
+              className="w-full h-full text-white" 
+              viewBox="0 0 200 200" 
+              fill="none" 
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <rect x="20" y="20" width="160" height="160" fill="#dde1e6" rx="8"/>
+              <line x1="40" y1="40" x2="160" y2="160" stroke="white" strokeWidth="12"/>
+              <line x1="160" y1="40" x2="40" y2="160" stroke="white" strokeWidth="12"/>
+            </svg>
+          </div>
+          {chartData.length === 0 && (
+            <div className="absolute bottom-2 left-0 right-0 text-center text-xs text-gray-500">
+              선택한 기간의 영상이 여기에 표시됩니다
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
