@@ -66,20 +66,36 @@ export function DashboardView() {
           setVideoSmoke(Number(d.confidence_gas));
         }
 
-            // 🔥 event 값에 따라 경고 메시지 & AlertDialog 생성
-        if (d.event !== undefined) {
+        // 🔥 event_sensor / event_video 기반 경고 & AlertDialog
+        const eventSensor = d.event_sensor ?? null;
+        const eventVideo  = d.event_video ?? null;
+
+        const hasSensorEvent = typeof d.event_sensor === "string" && d.event_sensor !== "none";
+        const hasVideoEvent  = typeof d.event_video === "string" && d.event_video !== "none";
+
+        // 둘 중 하나라도 이벤트가 있으면 경고 리스트에 추가
+        if (hasSensorEvent || hasVideoEvent) {
           const nowStr = new Date().toLocaleTimeString('ko-KR');
 
-          // 마지막 event 타입 저장
-          setLastEventType(d.event);
+          // event 타입 정리: 'both' | 'sensor' | 'video'
+          let eventType: string;
+          if (hasSensorEvent && hasVideoEvent) eventType = 'both';
+          else if (hasSensorEvent) eventType = 'sensor';
+          else eventType = 'video';
 
-          const isFire = d.event === 'both';
+          setLastEventType(eventType);
+
+          // ✅ 여기서 "alert 창" 조건: sensor + video 둘 다 있을 때만 true
+          const isFire = hasSensorEvent && hasVideoEvent;
+
           const type: AlertMessage['type'] = isFire ? 'danger' : 'warning';
           const message = isFire
-            ? '센서 데이터에서 화재 위험이 감지되었습니다.'
-            : '센서 데이터에서 이상 징후가 감지되었습니다.';
+            ? '화재 위험이 감지되었습니다.'
+            : hasSensorEvent
+              ? '센서 데이터에서 이상 징후가 감지되었습니다.'
+              : '영상 분석에서 이상 징후가 감지되었습니다.';
 
-          // ⚠️ 경고 리스트(오른쪽 카드)에 추가
+          // ⚠️ 오른쪽 경고 리스트에 추가
           setAlerts(prev => [
             {
               id: Date.now(),
@@ -90,7 +106,7 @@ export function DashboardView() {
             ...prev,
           ]);
 
-          // ✅ event === "both"일 때만 AlertDialog + TTS 실행
+          // ✅ 🔔 "alert 창(모달) + TTS"는 sensor & video 둘 다 있을 때만
           if (isFire) {
             const now = new Date();
             const formattedTime =
@@ -109,10 +125,12 @@ export function DashboardView() {
             }
           }
         }
+
       } catch (err) {
         console.error("SSE parse error", err);
       }
     };
+
 
     es.onerror = (e) => console.warn("SSE error", e);
     return () => es.close();

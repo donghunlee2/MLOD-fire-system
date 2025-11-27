@@ -59,10 +59,21 @@
       port: 3000,
       open: true,
       proxy: {
-        "/api": {
-          target: "http://localhost:8000", // Flask 서버 주소
+        "/api/stream": {
+          target: "http://localhost:8000",
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, ""),
+          rewrite: (path) => path.replace(/^\/api/, ""), // /api/stream -> /stream
+        },
+        "/api/latest": {
+          target: "http://localhost:8000",
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ""), // /api/latest -> /latest
+        },
+
+        // 로그 API: /api/logs -> /api/logs (rewrite 없음!)
+        "/api/logs": {
+          target: "http://localhost:8000",
+          changeOrigin: true,
         },
       },
     },
