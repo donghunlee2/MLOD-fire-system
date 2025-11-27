@@ -1,5 +1,3 @@
-# 1121 1445 수정완료
-
 from collections import deque
 from datetime import datetime, timezone
 from flask import Flask, Response, jsonify, request
@@ -54,7 +52,8 @@ def init_db():
                 temperature      REAL,
                 humidity         REAL,
                 gas              REAL,
-                event            TEXT,
+                event_sensor     TEXT,
+                event_video      TEXT,
                 confidence_flame REAL,
                 confidence_gas   REAL,
                 ts               INTEGER,
@@ -77,7 +76,8 @@ def save_to_db(data: dict):
                 temperature,
                 humidity,
                 gas,
-                event,
+                event_sensor,
+                event_video,
                 confidence_flame,
                 confidence_gas,
                 ts,
@@ -85,7 +85,7 @@ def save_to_db(data: dict):
                 received_at,
                 raw_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data.get("device_id"),
@@ -93,7 +93,8 @@ def save_to_db(data: dict):
                 data.get("humidity"),
                 # 센서 이름에 따라 smoke / gas 둘 다 가능성을 고려
                 data.get("gas"),
-                data.get("event"),
+                data.get("event_sensor"),
+                data.get("event_video"),
                 data.get("confidence_flame"),
                 data.get("confidence_gas"),
                 data.get("ts"),
@@ -105,6 +106,21 @@ def save_to_db(data: dict):
         db_conn.commit()
 
 init_db()
+
+def classify_log_type(event_sensor, event_video):
+    """
+    DB row의 event_sensor, event_video 값을 기준으로
+    로그 타입을 'DANGER' / 'WARNING' / 'INFO' 로 분류
+    """
+    sensor = (event_sensor is not None) and (event_sensor != "" and event_sensor != "none")
+    video  = (event_video  is not None) and (event_video  != "" and event_video  != "none")
+
+    if sensor and video:
+        return "DANGER"   # 대시보드에서 isFire == true인 경우
+    if sensor or video:
+        return "WARNING"
+    return "INFO"
+
 
 @app.route("/latest")
 def latest():
@@ -169,9 +185,9 @@ def available_dates():
         cur = db_conn.cursor()
         cur.execute(
             """
-            SELECT substr(received_at, 1, 10) AS date
+            SELECT substr(timestamp, 1, 10) AS date
             FROM sensor_data
-            WHERE received_at IS NOT NULL
+            WHERE timestamp IS NOT NULL
             GROUP BY date
             ORDER BY date ASC
             """
@@ -192,10 +208,10 @@ def get_data():
         cur = db_conn.cursor()
         cur.execute(
             """
-            SELECT received_at, temperature, gas
+            SELECT timestamp, temperature, gas
             FROM sensor_data
-            WHERE received_at BETWEEN ? AND ?
-            ORDER BY received_at ASC
+            WHERE timestamp BETWEEN ? AND ?
+            ORDER BY timestamp ASC
             """,
             (start_dt, end_dt),
         )
@@ -203,13 +219,95 @@ def get_data():
 
     data = [
         {
-            "timestamp": row["received_at"],
+            "timestamp": row["timestamp"],
             "temperature": row["temperature"],
             "gas": row["gas"],
         }
         for row in rows
     ]
     return jsonify({"data": data})
+
+@app.route("/api/logs", methods=["GET"])
+def get_logs():
+    page      = int(request.args.get("page", 1))
+    page_size = int(request.args.get("page_size", 20))
+    offset    = (page - 1) * page_size
+
+    with db_lock:
+        cur = db_conn.cursor()
+
+        # 전체 개수
+        cur.execute("SELECT COUNT(*) AS cnt FROM sensor_data")
+        total = cur.fetchone()["cnt"]
+
+        # 페이지 데이터
+        cur.execute(
+            """
+            SELECT
+                id,
+                timestamp,
+                device_id,
+                temperature,
+                humidity,
+                gas,
+                event_sensor,
+                event_video
+            FROM sensor_data
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?
+            """,
+            (page_size, offset),
+        )
+        rows = cur.fetchall()
+
+    logs = []
+    for row in rows:
+        row_id       = row["id"]
+        ts           = row["timestamp"]
+        device_id    = row["device_id"]
+        temperature  = row["temperature"]
+        humidity     = row["humidity"]
+        gas          = row["gas"]
+        event_sensor = row["event_sensor"]
+        event_video  = row["event_video"]
+
+        log_type = classify_log_type(event_sensor, event_video)
+
+        # 화재 위험 / 경고 / 정상 메시지 구성
+        if log_type == "DANGER":
+            temp_str = f"{temperature:.1f}" if temperature is not None else "-"
+            gas_str  = f"{gas:.1f}"         if gas is not None         else "-"
+            message = f"[FireDetection] 화재 위험 감지! 온도 {temp_str}°C, 연기 {gas_str}ppm"
+        elif log_type == "WARNING":
+            if event_sensor not in (None, "", "none") and event_video in (None, "", "none"):
+                message = "[SensorHub] 센서 데이터에서 이상 징후 감지"
+            elif event_video not in (None, "", "none") and event_sensor in (None, "", "none"):
+                message = "[VideoAI] 영상 분석에서 이상 징후 감지"
+            else:
+                message = "[System] 이상 징후가 감지되었습니다."
+        else:
+            message = "[System] 정상 데이터 수신"
+
+        logs.append(
+            {
+                "id": row_id,
+                "time": ts,
+                "type": log_type,  # "DANGER" / "WARNING" / "INFO"
+                "message": message,
+            }
+        )
+
+    total_pages = (total + page_size - 1) // page_size if page_size > 0 else 1
+
+    return jsonify(
+        {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "logs": logs,
+        }
+    )
 
 
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
