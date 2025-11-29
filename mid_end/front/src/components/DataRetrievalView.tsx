@@ -81,6 +81,9 @@ export function DataRetrievalView() {
   const [startTime, setStartTime] = useState("00:00");
   const [endTime, setEndTime] = useState("23:59");
 
+  const [videoFrames, setVideoFrames] = useState<{ timestamp: string; url: string }[]>([]);
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
+
   const toDateKey = (date: Date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -107,50 +110,61 @@ export function DataRetrievalView() {
     fetchAvailableDates();
   }, []);
 
-  const handleSearch = async () => {
-    if (!startDate || !endDate) return;
+const handleSearch = async () => {
+  if (!startDate || !endDate) return;
 
-    // 날짜 + 시간 합쳐서 DateTime 만들기
-    const start = buildDateTime(startDate, startTime);
-    const end = buildDateTime(endDate, endTime);
+  // 날짜 + 시간 합쳐서 DateTime 만들기
+  const start = buildDateTime(startDate, startTime);
+  const end = buildDateTime(endDate, endTime);
 
-    const startIso = start.toISOString();
-    const endIso = end.toISOString();
+  const startIso = start.toISOString();
+  const endIso = end.toISOString();
 
-    try {
-      const res = await fetch(
-        `http://localhost:8000/api/data?start_dt=${encodeURIComponent(
-          startIso,
-        )}&end_dt=${encodeURIComponent(endIso)}`
-      );
-      const json = await res.json();
-      const rows = json.data || [];
+  try {
+    // 1) 센싱 데이터 조회
+    const res = await fetch(
+      `http://localhost:8000/api/data?start_dt=${encodeURIComponent(
+        startIso,
+      )}&end_dt=${encodeURIComponent(endIso)}`
+    );
+    const json = await res.json();
+    const rows = json.data || [];
 
-      // 백엔드에서 받은 raw 시계열을 차트용으로 맵핑
-      const mapped = rows.map((row: any) => {
-        const d = new Date(row.timestamp);
+    const mapped = rows.map((row: any) => {
+      const d = new Date(row.timestamp);
+      return {
+        date: d.toLocaleTimeString("ko-KR", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        fullDate: d.toLocaleString("ko-KR"),
+        temperature: row.temperature ?? 0,
+        smoke: row.gas ?? 0,
+      };
+    });
 
-        return {
-          // X축에 표시할 값 (시간 기준)
-          date: d.toLocaleTimeString("ko-KR", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          // 툴팁용 전체 시간
-          fullDate: d.toLocaleString("ko-KR"),
-          // Y축 데이터
-          temperature: row.temperature ?? 0,
-          smoke: row.gas ?? 0,
-        };
-      });
+    setChartData(mapped);
 
-      setChartData(mapped);
-    } catch (err) {
-      console.error("failed to fetch data", err);
-      setChartData([]);
-    }
-  };
+    // 2) 영상 프레임 조회
+    const vRes = await fetch(
+      `http://localhost:8000/api/video_frames?start_dt=${encodeURIComponent(
+        startIso,
+      )}&end_dt=${encodeURIComponent(endIso)}`
+    );
+    const vJson = await vRes.json();
+    const frames = (vJson.frames || []).map((f: any) => ({
+      timestamp: f.timestamp,
+      url: `http://localhost:8000${f.url}`,  // 백엔드에서 준 상대 경로 앞에 붙이기
+    }));
 
+    setVideoFrames(frames);
+    setSelectedFrameIndex(0);
+  } catch (err) {
+    console.error("failed to fetch data or video frames", err);
+    setChartData([]);
+    setVideoFrames([]);
+  }
+};
 
   return (
     <div className="bg-white rounded-lg p-3 h-full flex flex-col overflow-hidden">
@@ -360,24 +374,77 @@ export function DataRetrievalView() {
 
         {/* Right: Video/Image Area */}
         <div className="h-full bg-[#dde1e6] relative flex items-center justify-center rounded-lg overflow-hidden">
-          <div className="w-[120px] h-[120px] bg-[#dde1e6] flex items-center justify-center">
-            <svg 
-              className="w-full h-full text-white" 
-              viewBox="0 0 200 200" 
-              fill="none" 
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <rect x="20" y="20" width="160" height="160" fill="#dde1e6" rx="8"/>
-              <line x1="40" y1="40" x2="160" y2="160" stroke="white" strokeWidth="12"/>
-              <line x1="160" y1="40" x2="40" y2="160" stroke="white" strokeWidth="12"/>
-            </svg>
-          </div>
-          {chartData.length === 0 && (
-            <div className="absolute bottom-2 left-0 right-0 text-center text-xs text-gray-500">
-              선택한 기간의 영상이 여기에 표시됩니다
+          {videoFrames.length > 0 ? (
+            <>
+              <img
+                src={videoFrames[selectedFrameIndex].url}
+                alt="조회 구간 영상 프레임"
+                className="w-full h-full object-contain"
+              />
+              <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-2 text-[11px] text-gray-100">
+                <button
+                  className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)] disabled:opacity-40"
+                  disabled={selectedFrameIndex === 0}
+                  onClick={() =>
+                    setSelectedFrameIndex((idx) => Math.max(0, idx - 1))
+                  }
+                >
+                  ◀
+                </button>
+                <span className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)]">
+                  {selectedFrameIndex + 1} / {videoFrames.length}
+                </span>
+                <button
+                  className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)] disabled:opacity-40"
+                  disabled={selectedFrameIndex === videoFrames.length - 1}
+                  onClick={() =>
+                    setSelectedFrameIndex((idx) =>
+                      Math.min(videoFrames.length - 1, idx + 1),
+                    )
+                  }
+                >
+                  ▶
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="w-[120px] h-[120px] bg-[#dde1e6] flex flex-col items-center justify-center text-xs text-gray-500">
+              <div className="mb-2">
+                {/* 기존 X 아이콘 그대로 써도 되고 생략해도 됨 */}
+                <svg
+                  className="w-10 h-10 text-white"
+                  viewBox="0 0 200 200"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <rect x="20" y="20" width="160" height="160" fill="#dde1e6" rx="8" />
+                  <line
+                    x1="40"
+                    y1="40"
+                    x2="160"
+                    y2="160"
+                    stroke="white"
+                    strokeWidth="12"
+                  />
+                  <line
+                    x1="160"
+                    y1="40"
+                    x2="40"
+                    y2="160"
+                    stroke="white"
+                    strokeWidth="12"
+                  />
+                </svg>
+              </div>
+              {chartData.length === 0 ? (
+                <span>날짜를 선택하고 조회를 수행하면</span>
+              ) : (
+                <span>해당 기간에 저장된 영상이 없습니다</span>
+              )}
             </div>
           )}
         </div>
+
       </div>
     </div>
   );

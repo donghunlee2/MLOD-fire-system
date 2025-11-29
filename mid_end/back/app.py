@@ -1,10 +1,12 @@
 from collections import deque
 from datetime import datetime, timezone
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
 import os, json, time, threading
 import paho.mqtt.client as mqtt
 import sqlite3
+import cv2
+import numpy as np
 
 # ===== Flask =====
 app = Flask(__name__)
@@ -106,6 +108,10 @@ def save_to_db(data: dict):
         db_conn.commit()
 
 init_db()
+# ==== Frame storage (영상 프레임 수신용) ====
+FRAME_DIR = "received_frames"
+os.makedirs(FRAME_DIR, exist_ok=True)
+last_frame = None  # 최신 프레임 메모리 보관
 
 def classify_log_type(event_sensor, event_video):
     """
@@ -227,6 +233,63 @@ def get_data():
     ]
     return jsonify({"data": data})
 
+@app.route("/video_frame", methods=["GET"])
+def get_video_frame():
+    filename = request.args.get("file")
+    if not filename:
+        return Response("file query param required", status=400)
+
+    path = os.path.join(FRAME_DIR, filename)
+    if not os.path.exists(path):
+        return Response("file not found", status=404)
+
+    return send_file(path, mimetype="image/jpeg")
+
+@app.route("/api/video_frames", methods=["GET"])
+def get_video_frames():
+    start_dt = request.args.get("start_dt")
+    end_dt   = request.args.get("end_dt")
+
+    if not start_dt or not end_dt:
+        return jsonify({"frames": []})
+
+    try:
+        # ISO 문자열 → datetime (타임존 들어있으면 일단 받아서 tz 제거)
+        start = datetime.fromisoformat(start_dt.replace("Z", "+00:00"))
+        end   = datetime.fromisoformat(end_dt.replace("Z", "+00:00"))
+        start_naive = start.replace(tzinfo=None)
+        end_naive   = end.replace(tzinfo=None)
+    except Exception:
+        # 포맷 이상하면 그냥 빈 리스트
+        return jsonify({"frames": []})
+
+    if not os.path.isdir(FRAME_DIR):
+        return jsonify({"frames": []})
+
+    frames = []
+    for name in os.listdir(FRAME_DIR):
+        if not name.lower().endswith(".jpg"):
+            continue
+        try:
+            # "2025-10-15T21-32-40_frame_0.jpg" -> "2025-10-15T21-32-40"
+            prefix = name.split("_frame_")[0]
+            ts = datetime.strptime(prefix, "%Y-%m-%dT%H-%M-%S")
+        except Exception:
+            continue
+
+        if start_naive <= ts <= end_naive:
+            frames.append(
+                {
+                    "timestamp": ts.isoformat(),
+                    "file": name,
+                    "url": f"/video_frame?file={name}",
+                }
+            )
+
+    frames.sort(key=lambda x: x["timestamp"])
+    return jsonify({"frames": frames})
+
+
 @app.route("/api/logs", methods=["GET"])
 def get_logs():
     page      = int(request.args.get("page", 1))
@@ -308,6 +371,60 @@ def get_logs():
             "logs": logs,
         }
     )
+
+@app.route("/api/frame", methods=["POST"])
+def receive_frame():
+    global last_frame
+
+    # ---- 헤더 추출 ----
+    device_id     = request.headers.get("X-Device-ID", "UNKNOWN")
+    timestamp_str = request.headers.get("X-Timestamp", "")
+    frame_index   = request.headers.get("X-Frame-Index", "-1")
+    fps           = request.headers.get("X-FPS", "?")
+
+    # ---- 바디(JPEG) 추출 ----
+    img_bytes = request.data
+    if not img_bytes:
+        return Response("No image data", status=400)
+
+    # JPEG 디코딩
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if frame is None:
+        return Response("Failed to decode image", status=400)
+
+    last_frame = frame
+
+    # ---- 파일 저장 ----
+    if timestamp_str:
+        ts = timestamp_str.replace(":", "-")
+    else:
+        ts = time.strftime("%Y-%m-%dT%H-%M-%S")
+
+    filename = f"{ts}_frame_{frame_index}.jpg"
+    save_path = os.path.join(FRAME_SAVE_DIR, filename)
+
+    cv2.imwrite(save_path, frame)
+    print(f"[FRAME SAVE] {save_path}")
+
+    print(
+        f"[FRAME RECV] device={device_id}, frame={frame_index}, "
+        f"fps={fps}, ts={timestamp_str}, shape={frame.shape}"
+    )
+
+    return Response("OK", status=200)
+
+@app.route("/latest_frame", methods=["GET"])
+def latest_frame():
+    global last_frame
+    if last_frame is None:
+        return Response("No frame yet", status=404)
+
+    success, encoded_image = cv2.imencode(".jpg", last_frame)
+    if not success:
+        return Response("Failed to encode image", status=500)
+
+    return Response(encoded_image.tobytes(), mimetype="image/jpeg")
 
 
 mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
