@@ -16,6 +16,14 @@ const buildDateTime = (date: Date, timeStr: string) => {
   return d;
 };
 
+// ✅ 추가: Date -> 'YYYY-MM-DDTHH:MM:SS' (로컬 기준) 문자열
+const toLocalTimestampString = (d: Date) => {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+
 // Helper function to format date
 const formatDate = (date: Date | undefined) => {
   if (!date) return '';
@@ -84,6 +92,9 @@ export function DataRetrievalView() {
   const [videoFrames, setVideoFrames] = useState<{ timestamp: string; url: string }[]>([]);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
 
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackFps, setPlaybackFps] = useState(3);  // 화면에서 3fps 정도로 재생  
+
   const toDateKey = (date: Date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -110,28 +121,50 @@ export function DataRetrievalView() {
     fetchAvailableDates();
   }, []);
 
+   // ✅ 추가: 가짜 영상 재생용 타이머
+  useEffect(() => {
+    if (!isPlaying || videoFrames.length === 0) return;
+
+    const interval = 1000 / playbackFps;
+    const id = window.setInterval(() => {
+      setSelectedFrameIndex((prev) => {
+        if (videoFrames.length === 0) return 0;
+        return (prev + 1) % videoFrames.length; // 끝까지 가면 다시 처음으로
+      });
+    }, interval);
+
+    return () => window.clearInterval(id);
+  }, [isPlaying, playbackFps, videoFrames.length]);
+
 const handleSearch = async () => {
   if (!startDate || !endDate) return;
 
-  // 날짜 + 시간 합쳐서 DateTime 만들기
   const start = buildDateTime(startDate, startTime);
   const end = buildDateTime(endDate, endTime);
 
-  const startIso = start.toISOString();
-  const endIso = end.toISOString();
+  // ✅ KST 기준 로컬 문자열로 변환 (백엔드 DB timestamp와 같은 포맷)
+  const startStr = toLocalTimestampString(start);
+  const endStr = toLocalTimestampString(end);
 
   try {
     // 1) 센싱 데이터 조회
     const res = await fetch(
       `http://localhost:8000/api/data?start_dt=${encodeURIComponent(
-        startIso,
-      )}&end_dt=${encodeURIComponent(endIso)}`
+        startStr,
+      )}&end_dt=${encodeURIComponent(endStr)}`
     );
     const json = await res.json();
     const rows = json.data || [];
 
     const mapped = rows.map((row: any) => {
-      const d = new Date(row.timestamp);
+      const tsStr: string = row.timestamp ?? "";
+      if (!tsStr) {
+        return null;
+      }
+
+      // 'YYYY-MM-DDTHH:MM:SS'를 로컬 시간으로 해석
+      const d = new Date(tsStr);
+
       return {
         date: d.toLocaleTimeString("ko-KR", {
           hour: "2-digit",
@@ -141,15 +174,15 @@ const handleSearch = async () => {
         temperature: row.temperature ?? 0,
         smoke: row.gas ?? 0,
       };
-    });
+    }).filter((x) => x !== null);
 
     setChartData(mapped);
 
     // 2) 영상 프레임 조회
     const vRes = await fetch(
       `http://localhost:8000/api/video_frames?start_dt=${encodeURIComponent(
-        startIso,
-      )}&end_dt=${encodeURIComponent(endIso)}`
+        startStr,
+      )}&end_dt=${encodeURIComponent(endStr)}`
     );
     const vJson = await vRes.json();
     const frames = (vJson.frames || []).map((f: any) => ({
@@ -159,6 +192,7 @@ const handleSearch = async () => {
 
     setVideoFrames(frames);
     setSelectedFrameIndex(0);
+    setIsPlaying(false)
   } catch (err) {
     console.error("failed to fetch data or video frames", err);
     setChartData([]);
@@ -381,30 +415,76 @@ const handleSearch = async () => {
                 alt="조회 구간 영상 프레임"
                 className="w-full h-full object-contain"
               />
-              <div className="absolute bottom-2 left-0 right-0 flex items-center justify-center gap-2 text-[11px] text-gray-100">
-                <button
-                  className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)] disabled:opacity-40"
-                  disabled={selectedFrameIndex === 0}
-                  onClick={() =>
-                    setSelectedFrameIndex((idx) => Math.max(0, idx - 1))
-                  }
-                >
-                  ◀
-                </button>
-                <span className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)]">
-                  {selectedFrameIndex + 1} / {videoFrames.length}
-                </span>
-                <button
-                  className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)] disabled:opacity-40"
-                  disabled={selectedFrameIndex === videoFrames.length - 1}
-                  onClick={() =>
-                    setSelectedFrameIndex((idx) =>
-                      Math.min(videoFrames.length - 1, idx + 1),
-                    )
-                  }
-                >
-                  ▶
-                </button>
+
+              {/* 하단 컨트롤 바 */}
+              <div className="absolute bottom-2 left-2 right-2 flex flex-col gap-1 text-[11px] text-gray-100">
+                {/* 타임라인 슬라이더 */}
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(videoFrames.length - 1, 0)}
+                  value={selectedFrameIndex}
+                  onChange={(e) => {
+                    setSelectedFrameIndex(Number(e.target.value));
+                  }}
+                  className="w-full"
+                />
+
+                {/* 버튼들 */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1">
+                    {/* 재생 / 일시정지 */}
+                    <button
+                      className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)]"
+                      onClick={() => setIsPlaying((prev) => !prev)}
+                      disabled={videoFrames.length === 0}
+                    >
+                      {isPlaying ? "⏸" : "▶"}
+                    </button>
+
+                    {/* 프레임 이동 */}
+                    <button
+                      className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)] disabled:opacity-40"
+                      disabled={selectedFrameIndex === 0}
+                      onClick={() => {
+                        setIsPlaying(false);
+                        setSelectedFrameIndex((idx) => Math.max(0, idx - 1));
+                      }}
+                    >
+                      ◀
+                    </button>
+                    <button
+                      className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)] disabled:opacity-40"
+                      disabled={selectedFrameIndex === videoFrames.length - 1}
+                      onClick={() => {
+                        setIsPlaying(false);
+                        setSelectedFrameIndex((idx) =>
+                          Math.min(videoFrames.length - 1, idx + 1),
+                        );
+                      }}
+                    >
+                      ▶
+                    </button>
+                  </div>
+
+                  {/* 현재 위치 & 재생 속도 */}
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded bg-[rgba(0,0,0,0.4)]">
+                      {selectedFrameIndex + 1} / {videoFrames.length}
+                    </span>
+
+                    <select
+                      className="bg-[rgba(0,0,0,0.4)] px-2 py-0.5 rounded"
+                      value={playbackFps}
+                      onChange={(e) => setPlaybackFps(Number(e.target.value))}
+                    >
+                      <option value={1}>1x</option>
+                      <option value={2}>2x</option>
+                      <option value={3}>3x</option>
+                      <option value={5}>5x</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </>
           ) : (
