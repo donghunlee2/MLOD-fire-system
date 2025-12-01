@@ -6,7 +6,6 @@
 - YOLO 기반 화재/연기 탐지 실행  
 - 탐지 결과를 MQTT 등으로 상위 서버에 전달  
 
----
 
 ## 2. TOPST D3-P Image (Ubuntu / Yocto)
 TOPST 이미지는 다음 링크에서 다운로드 할 수 있다:
@@ -20,12 +19,10 @@ TOPST 이미지는 다음 링크에서 다운로드 할 수 있다:
 제공된 코드는 **Ubuntu 이미지**에서만 테스트되었으며 Yocto 이미지에서는 테스트하지 않았다.
 Ubuntu 이미지는 일반 Linux 환경과 동일하게 Python 코드 실행이 가능하다.
 
----
 
 ## 3. Environment
 필요 패키지 설치: 'pip install -r requirements.txt'
 
----
 
 ## 4. Running the codes
 **Model**: 'best_int_quant.tflite' 학습된 YOLOv8 기반 모델
