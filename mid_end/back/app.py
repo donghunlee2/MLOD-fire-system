@@ -226,7 +226,7 @@ def stream():
     return resp
 
 # ===== MQTT =====
-MQTT_BROKER = ""     # <TOPST D3 IP>
+MQTT_BROKER = "localhost"     # <TOPST D3 IP>
 MQTT_PORT   = 1883
 MQTT_TOPIC  = "fire/sensor"
 MQTT_FRAME_TOPIC = "fire/frame"

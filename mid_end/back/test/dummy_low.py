@@ -5,9 +5,8 @@ import math
 from datetime import datetime, timedelta
 import paho.mqtt.client as mqtt
 
-# MQTT 브로커 설정 (필요하면 IP/포트 수정)
 client = mqtt.Client()
-client.connect("localhost", 1883, 60)
+client.connect("localhost", 1883, 60)    # TOPST D3 IP
 
 # ---------------------------
 # Utility Functions
