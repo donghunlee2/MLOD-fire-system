@@ -21,9 +21,9 @@ Ubuntu 이미지는 일반 Linux 환경과 동일하게 Python 코드 실행이 
 
 
 ## 3. Environment
-필요 패키지 설치: 'pip install -r requirements.txt'
+필요 패키지 설치: `pip install -r requirements.txt`
 
 
 ## 4. Running the codes
-**Model**: 'best_int_quant.tflite' 학습된 YOLOv8 기반 모델
-**Run**: 'python etr_video.py'
+**Model**: `best_int_quant.tflite` 학습된 YOLOv8 기반 모델
+**Run**: `python etr_video.py`
