@@ -379,10 +379,10 @@ def run():
             x, y, w_box, h_box = row[0], row[1], row[2], row[3]
 
             # Convert from model-space to original image coordinates
-            left = int((x - 0.5 * w_box) * (w_orig / w_model))
-            top = int((y - 0.5 * h_box) * (h_orig / h_model))
-            width = int(w_box * (w_orig / w_model))
-            height = int(h_box * (h_orig / h_model))
+            left = int((x - 0.5 * w_box) * w_orig)
+            top = int((y - 0.5 * h_box) * h_orig)
+            width = int(w_box * w_orig)
+            height = int(h_box * h_orig)
 
             boxes.append([left, top, width, height])
             confidences.append(conf)
@@ -469,3 +469,4 @@ def run():
 
 if __name__ == "__main__":
     run()
+
