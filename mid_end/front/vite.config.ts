@@ -75,6 +75,10 @@
           target: "http://localhost:8000",
           changeOrigin: true,
         },
+        "/api/thresholds": {
+          target: "http://localhost:8000",
+          changeOrigin: true,
+        },
       },
     },
   });

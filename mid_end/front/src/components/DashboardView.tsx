@@ -45,6 +45,48 @@ export function DashboardView() {
   const [prevVideoFlameStatus, setPrevVideoFlameStatus] = useState<string>('정상');
   const [prevVideoSmokeStatus, setPrevVideoSmokeStatus] = useState<string>('정상');
 
+  // 🔥 알람 시점 근처의 프레임 가져오기
+  const fetchFireFrame = async (eventTimestamp?: string | null) => {
+    try {
+      // 이벤트 시각(센서 timestamp) 기준 ±60초 범위 검색
+      const baseTime = eventTimestamp ? new Date(eventTimestamp) : new Date();
+      const start = new Date(baseTime.getTime() - 60_000);
+      const end   = new Date(baseTime.getTime() + 60_000);
+
+      const fmt = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T` +
+        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+
+      const startStr = fmt(start);
+      const endStr   = fmt(end);
+
+      // 백엔드에서 프레임 목록 조회
+      const backendBase = 'http://localhost:8000'; // DataRetrievalView에서 쓰던 것과 동일하게 사용
+      const res = await fetch(
+        `${backendBase}/api/video_frames?start_dt=${encodeURIComponent(startStr)}&end_dt=${encodeURIComponent(endStr)}`
+      );
+
+      if (!res.ok) {
+        console.error('failed to fetch video_frames', res.status);
+        setFireDetectionImage('');
+        return;
+      }
+
+      const json = await res.json();
+
+      if (json.frames && json.frames.length > 0) {
+        // 가장 마지막(가장 최근) 프레임 사용
+        const frame = json.frames[json.frames.length - 1];
+        setFireDetectionImage(`${backendBase}${frame.url}`);
+      } else {
+        setFireDetectionImage('');
+      }
+    } catch (e) {
+      console.error('fire frame fetch error', e);
+      setFireDetectionImage('');
+    }
+  };
+
   // 실시간 데이터 구독
   useEffect(() => {
     const API = "/api"; // 프록시 사용 중. 아니면 "http://localhost:8000"
@@ -115,6 +157,9 @@ export function DashboardView() {
 
             setFireDetectionTime(formattedTime);
             setShowFireDialog(true);
+
+            setFireDetectionImage('');
+            fetchFireFrame(d.timestamp ?? null);
 
             if ("speechSynthesis" in window) {
               const msg = new SpeechSynthesisUtterance("화재가 감지되었습니다. 즉시 대피하세요.");
@@ -506,7 +551,7 @@ export function DashboardView() {
               <img 
                 src={fireDetectionImage} 
                 alt="화재 감지 이미지" 
-                className="w-full h-full object-cover"
+                className="max-w-full max-h-full object-contain"
               />
             ) : (
               <div className="flex flex-col items-center gap-3">
