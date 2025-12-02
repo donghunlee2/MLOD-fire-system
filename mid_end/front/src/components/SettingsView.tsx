@@ -5,6 +5,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { useThresholds } from './ThresholdContext';
 import { toast } from 'sonner@2.0.3';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
 export function SettingsView() {
   const { thresholds, updateThresholds } = useThresholds();
@@ -15,6 +16,8 @@ export function SettingsView() {
   const [smokeDanger, setSmokeDanger] = useState(thresholds.smoke.danger.toString());
   const [videoWarning, setVideoWarning] = useState(thresholds.video.warning.toString());
   const [videoDanger, setVideoDanger] = useState(thresholds.video.danger.toString());
+
+  const [isNotificationExpanded, setIsNotificationExpanded] = useState(true);
 
   useEffect(() => {
     setTempWarning(thresholds.temperature.warning.toString());
@@ -33,7 +36,7 @@ export function SettingsView() {
     }
   };
 
-  const handleApply = () => {
+  const handleApply = async () => {
     const newThresholds = {
       temperature: {
         warning: parseFloat(tempWarning) || 0,
@@ -49,7 +52,7 @@ export function SettingsView() {
       },
     };
 
-    // Validation
+    // --- 유효성 검사는 그대로 ---
     if (newThresholds.temperature.warning >= newThresholds.temperature.danger) {
       toast.error('온도 경고 값은 위험 값보다 작아야 합니다.');
       return;
@@ -63,15 +66,36 @@ export function SettingsView() {
       return;
     }
 
+    // 1) 프론트 context 업데이트
     updateThresholds(newThresholds);
-    toast.success('임계값이 성공적으로 적용되었습니다.');
+
+    try {
+      // 2) 백엔드에 임계값 전송
+      const res = await fetch('/api/thresholds', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(newThresholds),
+      });
+
+      if (!res.ok) {
+        throw new Error('failed');
+      }
+
+      toast.success('임계값이 성공적으로 적용되었습니다. (ESP32 반영 요청 전송)');
+    } catch (err) {
+      console.error(err);
+      toast.error('임계값 적용 중 오류가 발생했습니다. (백엔드 통신 실패)');
+    }
   };
+
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <h1 className="text-lg mb-3 flex-shrink-0 font-bold pt-[0px] pr-[0px] pb-[0px] pl-[5px]">설정</h1>
 
-      <div className="flex-1 overflow-y-auto space-y-3">
+      <div className="flex-1 overflow-y-auto space-y-3 flex flex-col">
         {/* 임계값 설정 */}
         <Card>
           <CardContent className="pt-3 space-y-3">
@@ -187,14 +211,25 @@ export function SettingsView() {
         </Card>
 
         {/* 사용자 알림 설정 */}
-        <Card>
-          <CardContent className="pt-3 space-y-3">
-            <div className="space-y-1">
+        <Card className={isNotificationExpanded ? "flex-1 flex flex-col overflow-hidden" : "flex-shrink-0"}>
+          <CardContent className={`pt-3 pb-3 ${isNotificationExpanded ? 'flex-1 flex flex-col' : ''}`}>
+            <div
+              className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
+              onClick={() => setIsNotificationExpanded(!isNotificationExpanded)}
+            >
               <h2 className="text-base">사용자 알림 설정</h2>
+              {isNotificationExpanded ? (
+                <ChevronUp className="w-4 h-4 text-gray-600" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-gray-600" />
+              )}
             </div>
-            <div className="text-gray-500 text-center py-4 text-sm">
-              사용자 맞춤 알림 설정 기능은 준비 중입니다.
-            </div>
+
+            {isNotificationExpanded && (
+              <div className="text-gray-500 text-center flex-1 flex items-center justify-center text-sm mt-3">
+                사용자 맞춤 알림 설정 기능은 준비 중입니다.
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

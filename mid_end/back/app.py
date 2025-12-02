@@ -191,6 +191,38 @@ def handle_frame_mqtt(img_bytes: bytes, headers: dict | None = None):
     print(f"[FRAME MQTT SAVE] {save_path}")
 
 
+@app.route("/api/thresholds", methods=["POST"])
+def set_thresholds():
+    """
+    프론트에서 온 임계값을 받아서 MQTT로 ESP32에 전송
+    """
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "invalid json"}), 400
+
+    # 프론트 구조 그대로 들어온다고 가정
+    temp = data.get("temperature", {})
+    smoke = data.get("smoke", {})
+
+    payload = {
+        "device_id": "ESP32_01",
+        "temp_warning": temp.get("warning"),
+        "temp_danger": temp.get("danger"),
+        "smoke_warning": smoke.get("warning"),
+        "smoke_danger": smoke.get("danger"),
+    }
+
+    try:
+        mqtt_client.publish(THRESHOLD_TOPIC, json.dumps(payload))
+        print("[THRESHOLD] publish ->", THRESHOLD_TOPIC, payload)
+    except Exception as e:
+        print("[THRESHOLD] MQTT publish error:", e)
+        return jsonify({"error": "mqtt publish failed"}), 500
+
+    return jsonify({"status": "ok"})
+
+
 @app.route("/latest")
 def latest():
     return jsonify(buffer[-1] if buffer else {})
@@ -230,6 +262,7 @@ MQTT_BROKER = "localhost"     # <TOPST D3 IP>
 MQTT_PORT   = 1883
 MQTT_TOPIC  = "fire/sensor"
 MQTT_FRAME_TOPIC = "fire/frame"
+THRESHOLD_TOPIC = "fire/config/ESP32_01" 
 
 def on_connect(client, userdata, flags, rc, properties=None):
     print("MQTT connected:", rc)
@@ -268,8 +301,8 @@ def on_message(client, userdata, msg):
                 obj = json.loads(text)
 
                 # JSON 안에 base64 이미지가 있을 때
-                if "image" in obj:
-                    img_b64 = obj["image"]
+                if "image_base64" in obj:
+                    img_b64 = obj["image_base64"]
                     img_bytes = base64.b64decode(img_b64)
 
                     # 메타데이터 → headers로 전달
