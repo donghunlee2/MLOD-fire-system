@@ -13,7 +13,7 @@ export default function App() {
 
   return (
     <ThresholdProvider>
-      <div className="h-screen overflow-hidden flex flex-col" style={{ backgroundColor: '#F2F4F8', width: '1024px', height: '600px' }}>
+      <div className="h-screen overflow-hidden flex flex-col" style={{ backgroundColor: '#F2F4F8', width: '1146px', height: '645px' }}>
       {/* Header */}
       <header className="text-white p-2 flex-shrink-0" style={{ backgroundColor: '#878D96' }}>
         <div className="flex items-center gap-2 p-0">

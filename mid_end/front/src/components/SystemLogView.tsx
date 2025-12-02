@@ -74,7 +74,7 @@ function getLogBadgeColor(type: LogType) {
   }
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 11;
 
 export function SystemLogView() {
   const [currentPage, setCurrentPage] = useState(1);
